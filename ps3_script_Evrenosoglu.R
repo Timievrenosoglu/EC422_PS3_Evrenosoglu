@@ -150,12 +150,12 @@ can_gas |>
 # 3.1 c
 
 # add a column with the log of the volume
-retail_ts <- retail_ts |>
+retail_ts_na <- retail_ts |>
   filter(series_id == "RSAFSNA") |>
   mutate(log_sales = log(sales))
 
 # plot the log version
-retail_ts |>
+retail_ts_na |>
   autoplot(log_sales) +
   geom_smooth(method = "loess") +
   labs(
@@ -213,3 +213,124 @@ retail_ts |>
     x = NULL, y = "Growth rate (%)", color = NULL
   ) +
   theme_minimal()
+
+# The NSA growth rate is much noisier, with most of that being the seasonal pattern described in 2.7b showing up again.
+# It makes sense that the Seasonal Adjusted is less noisy as the seasonal aspect is removed. Its month-over-month growth reflects underlying changes in spending, so it stays close to a small positive number most months.
+
+# 4.1 a
+retail_ts |>
+  filter(series_id == "RSAFSNA") |>
+  gg_season(sales) +
+  labs(
+    title = "Seasonal Pattern in NSA Retail Sales",
+    y = "Millions of dollars"
+  ) +
+  theme_minimal()
+
+# 4.1 b
+retail_ts |>
+  filter(series_id == "RSAFS") |>
+  gg_season(sales) +
+  labs(
+    title = "Seasonal Pattern in SA Retail Sales",
+    y = "Millions of dollars"
+  ) +
+  theme_minimal()
+
+# The difference is now clear: The seasonal adjusted version just shows the underlying growth rather than the seasonal spikes usually experienced around December. In the NSA, the seasons are relatively following the same pattern but are very up-and-down. The SA is very steady and smooth, like a more straight line.
+
+can_gas |>
+  gg_season(log_volume)+
+  labs(
+    title = "Seasonal Pattern in Log Gas Volume",
+    y = "Log Volume"
+  ) +
+  theme_minimal()
+
+# Because gas is used for heating there is a consistent dip in production around the summer months (June-August) and then an increased demand in the winter months usually peaking around December and January
+
+# 4.2 
+can_gas |>
+  gg_subseries(log_volume) +
+  labs(
+    title = "Subseries Plot: Canadian Gas Production",
+    y = "log(Volume)"
+  )
+
+# 4.3
+retail_nsa_x13 <- retail_ts |>
+  filter(series_id == "RSAFSNA") |>
+  model(x13 = X_13ARIMA_SEATS(sales)) |>
+  components()
+
+retail_nsa_x13 |> autoplot()
+
+# From the graphs it looks like December has the highest seasonal factor. This is the tall spike at the end of each year. In the early 1990s the factor was about 1.2, meaning December sales were ~20% above the trend. By the 2020s it had fallen to about 1.1, or ~10% above trend.
+
+#4.3 b
+sa_compare <- retail_nsa_x13 |>
+  as_tibble() |>
+  select(Month, mine = season_adjust) |>
+  left_join(
+    retail_ts |>
+      filter(series_id == "RSAFS") |>
+      as_tibble() |>
+      transmute(Month, census = sales),
+    by = "Month"
+  ) |>
+  mutate(pct_diff = 100 * (log(mine) - log(census)))
+
+sa_compare |>
+  ggplot(aes(x = Month, y = pct_diff)) +
+  geom_line() +
+  labs(
+    title = "My X-13 Seasonal Adjustment Minus the Census Bureau's",
+    x = NULL, y = "Difference (%)"
+  ) +
+  theme_minimal()
+
+
+# It looks like the default X-13 matches up fairly closely with the census bureau's adjustment except for in 2020 which is when COVID occurred. This makes sense because the census bureau probably adjusted for many other factors in 2020 because it was so irregular
+
+# 4.4 a
+can_gas_fit <- can_gas |>
+  model(TSLM(log_volume ~ trend() + season()))
+
+report(can_gas_fit)
+
+can_gas_fit |>
+  tidy() |>
+  select(term, estimate, std.error, statistic, p.value) |>
+  knitr::kable(digits = 3)
+
+# The estimated average monthly growth rate of gas production is 0.004
+# The largest seasonal effect occurs in June with a t stat of -4.777. This makes sense because it is one of the first summer months and will most likely incur the biggest change
+
+# 4.4 b
+can_gas_fit |>
+  augment() |>
+  ggplot(aes(x = Month)) +
+  geom_line(aes(y = log_volume, color = "Actual")) +
+  geom_line(aes(y = .fitted, color = "Fitted")) +
+  labs(title = "Linear Trend + Seasonal Dummies Fit: Canadian Gas Production",
+       y = "log(Volume)", color = NULL) +
+  theme_minimal()
+
+# It does very well between 1980 and 2000 and it visibly misses between 1960 and 1980.
+
+# 4.4 c
+can_gas_fit |> gg_tsresiduals()
+
+
+can_gas_fit |>
+  augment() |>
+  features(.innov, ljung_box, lag = 24)
+
+# These residuals are not white noise, as there is a clear trend of residuals that follows our previous analaysis. There is also a left skewed histogram showing that most residuals around at or very close to 0.
+# The Ljung Box stat is 7774 with a p value of 0. So at the 5% level, we reject the null hypothesis that residuals are white noise.
+
+
+
+
+
+
