@@ -329,8 +329,50 @@ can_gas_fit |>
 # These residuals are not white noise, as there is a clear trend of residuals that follows our previous analaysis. There is also a left skewed histogram showing that most residuals around at or very close to 0.
 # The Ljung Box stat is 7774 with a p value of 0. So at the 5% level, we reject the null hypothesis that residuals are white noise.
 
+# 5.1 a
+gas_cv_fc <- can_gas |>
+  select(Month, Volume) |>
+  stretch_tsibble(.init = 240, .step = 1) |>
+  model(snaive = SNAIVE(Volume),
+        tslm   = TSLM(log(Volume) ~ trend() + season())) |>
+  forecast(h = 1)
 
+gas_cv_fc |>
+  accuracy(can_gas, measures = list(MAE = MAE, RMSE = RMSE))
 
+# January 1960 to February 2005. Snaive MAE: 0.562 & RMSE: 0.702. Tslm MAE: 4.01 & RMSE: 4.36
+# SNAIVE forecasts  more accurately, with errors roughly 7 times smaller than TSLM on both measures. The errors are in billions of cubic meters.
+# The two metrics agree that the RMSE is larger than MAE for both models, as it always is, because RMSE weights big errors more heavily.
 
+# 5.2 
+errs <- gas_cv_fc |>
+  as_tibble() |>
+  left_join(as_tibble(can_gas) |> select(Month, actual = Volume),
+            by = "Month") |>
+  mutate(e = actual - .mean) |>
+  select(Month, .model, e) |>
+  pivot_wider(names_from = .model, values_from = e) |>
+  na.omit()
 
+forecast::dm.test(errs$snaive, errs$tslm, h = 1, power = 1)
 
+# DM Stat: -31.278, p-value < 2.2e-16
+# Reject the null hypothesis that the two models have equal forecast accuracy. 
+# The DM statistic is negative, so SNAIVE has significantly smaller absolute errors than the TSLM model
+
+# 5.3
+gas_cv_fc <- can_gas |>
+  select(Month, Volume) |>
+  slide_tsibble(.size = 240, .step = 1) |>
+  model(snaive = SNAIVE(Volume),
+        tslm   = TSLM(log(Volume) ~ trend() + season())) |>
+  forecast(h = 1)
+
+gas_cv_fc |>
+  accuracy(can_gas, measures = list(MAE = MAE, RMSE = RMSE))
+
+# Snaive MAE: 0.562 & RMSE: 0.702. Tslm MAE: 2.09 & RMSE: 2.42
+# The Snaive MAE and RMSE stayed the exact same, SNAIVE’s forecast is just the value from the same month last year, so dropping old observations has no effect.
+# Because A rolling 20-year window drops those early years (60s and 70s) as it moves forward, the slope then reflects more recent growth, and the overshoot will shrink
+
+  
